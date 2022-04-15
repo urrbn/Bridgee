@@ -2,7 +2,7 @@ const { expect } = require("chai");
 const { ethers } = require("hardhat");
 const contractBridge = require("../artifacts/contracts/Bridge.sol/Bridge.json");
 
-describe("Greeter", function () {
+describe("Bridge", function () {
   before(async function () {
     const provider = ethers.provider;
     this.signers = await ethers.getSigners()
@@ -14,38 +14,34 @@ describe("Greeter", function () {
     this.bridge = await Bridge.deploy();
     await this.bridge.deployed();
 
-    const Bridge2 = await ethers.getContractFactory("Bridge");
-    this.bridgeBsc = await Bridge2.deploy();
-    await this.bridgeBsc.deployed();
-
     const Token = await ethers.getContractFactory("Token");
-    this.token = await Token.deploy('bsc', 'bsc');
+    this.token = await Token.deploy('tkn', 'tkn');
     await this.token.deployed();
-
-    const Token2 = await ethers.getContractFactory("Token");
-    this.tokenBsc = await Token2.deploy("token", 'tkn');
-    await this.tokenBsc.deployed();
-
-    await console.log(this.tokenBsc.address, "bsc")
-    await console.log(this.token.address)
-
-
-
+    console.log(this.alice.address)
   });
 
-  it("should", async function (){
-    const provider = ethers.provider;
-    const bscBridge = new ethers.Contract(this.bridgeBsc.address , contractBridge.abi , provider)
-    const ethBridge = new ethers.Contract(this.bridge.address , contractBridge.abi , provider)
+  it("should emit swapInitialized", async function (){
+    await this.bridge.includeToken('tkn', this.token.address)
+    let chainFrom = 2
+    let chainTo = 1
+    await this.bridge.updateChainById(chainFrom, true)
+    await this.bridge.updateChainById(chainTo, true)
+    await this.bridge.swap(this.owner.address, 100000000, 'tkn', chainTo, chainFrom)
+    await expect(this.bridge.swap(this.owner.address, 100000000, 'tkn', chainTo, chainFrom)).to.emit(this.bridge, "SwapInitialized").withArgs(this.owner.address, this.owner.address, 100000000, 'tkn', chainFrom, chainTo, 1)
+    
+  })
 
-    const filter1 = bscBridge.filters.SwapInitialized()
-    const filter2 = ethBridge.filters.SwapInitialized()
-    
-    bscBridge.on('SwapInitialized', (from, to, amount, ticker, chainTo, chainFrom, nonce) => console.log(from, to, amount, ticker, chainTo, chainFrom, nonce))
-    bscBridge.connect(this.alice).swap(this.alice.address, 1000000, "tkn", 9, 9)
-    
-    let listeners =  bscBridge.listeners("SwapInitialized")
-    console.log(listeners)
-    
+  it("Should emit 'Redeemed'", async function (){
+    let chainFrom = 2
+    let chainTo = 1
+
+    const message = ethers.utils.solidityKeccak256(
+      ["address", "address", "uint256", "string", "uint256", "uint256", "uint256"],
+      [this.owner.address, this.owner.address, 100000000, 'tkn', chainFrom, chainTo, 0]
+    );
+
+    const signature = await this.owner.signMessage(ethers.utils.arrayify(message));
+
+    await expect(this.bridge.redeem(this.owner.address, this.owner.address, 100000000, 'tkn', chainFrom, chainTo, 0, signature)).to.emit(this.bridge, "Redeemed").withArgs(this.owner.address, this.owner.address, 100000000, 'tkn', chainFrom, chainTo, 0)
   })
 });

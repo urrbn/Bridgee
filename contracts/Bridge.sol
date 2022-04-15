@@ -5,6 +5,7 @@ import "./IToken.sol";
 
 contract Bridge{
   address public validator;
+  uint256 private currentNonce = 0;
   mapping(bytes32 => bool) public processedHashes;
   mapping(string => address) public TickerToToken;
   mapping(uint256 => bool) public activeChainIds;
@@ -19,14 +20,25 @@ contract Bridge{
     uint256 nonce
   );
 
+  event Redeemed(
+    address from,
+    address to,
+    uint256 amount,
+    string  ticker,
+    uint256 chainTo,
+    uint256 chainFrom,
+    uint256 nonce
+  );
+
   constructor() {
     validator = msg.sender;
   }
 
-  function swap(address to, uint256 amount, string memory ticker, uint256 nonce, uint256 chainTo) external {
-    require(processedHashes[keccak256(abi.encodePacked(to, amount, nonce))] == false, "transfer already processed");
-    uint256 chainFrom = getChainID();
-    bytes32 hash_ = keccak256(abi.encodePacked(to, amount, nonce));
+  function swap(address to, uint256 amount, string memory ticker, uint256 chainTo, uint256 chainFrom) external {
+    uint256 nonce = currentNonce;
+    currentNonce++;
+    require(processedHashes[keccak256(abi.encodePacked(msg.sender, to, amount, chainFrom, chainTo, ticker, nonce))] == false, "swap already processed");
+    bytes32 hash_ = keccak256(abi.encodePacked(msg.sender, to, amount, chainFrom, chainTo, ticker, nonce));
     
     processedHashes[hash_] = true;
     address token = TickerToToken[ticker];
@@ -42,28 +54,61 @@ contract Bridge{
     );
   }
 
-  function redeem(address addr, uint256 val, uint8 v, bytes32 r, bytes32 s , string memory ticker, uint256 chainFrom, uint256 nonce) public {
-    uint256 chainTo = getChainID();
+  function redeem(address from, address to, uint256 amount, string memory ticker, uint256 chainFrom, uint256 chainTo, uint256 nonce, bytes calldata signature) public {
+    bytes32 hash_ = keccak256(abi.encodePacked(from, to, amount, ticker, chainFrom, chainTo, nonce));
 
     require(chainFrom != chainTo, "invalid chainTo");
-    require(activeChainIds[chainFrom], "chain is not active :(");
+    require(recoverSigner(hashMessage(hash_), signature) == validator ,  "invalid sig");
+    
+    address token = TickerToToken[ticker];
+    IToken(token).mint(msg.sender, amount); 
 
-    bytes32 message = keccak256(abi.encodePacked(addr, val));
-    address account = ecrecover(hashMessage(message), v, r, s);
-    if(account == validator){
-        address token = TickerToToken[ticker];
-        IToken(token).burn(msg.sender, val);  
-    }else {
-        revert("invalid signatue");
-    }
+    emit Redeemed(from, to, amount, ticker, chainFrom, chainTo, nonce); 
+    
   }
+
+  function recoverSigner(bytes32 message, bytes memory sig)
+    internal
+    pure
+    returns (address)
+  {
+    uint8 v;
+    bytes32 r;
+    bytes32 s;
+  
+    (v, r, s) = splitSignature(sig);
+  
+    return ecrecover(message, v, r, s);
+  }
+
+  function splitSignature(bytes memory sig)
+    internal
+    pure
+    returns (uint8, bytes32, bytes32)
+  {
+    require(sig.length == 65);
+  
+    bytes32 r;
+    bytes32 s;
+    uint8 v;
+  
+    assembly {
+        r := mload(add(sig, 32))
+        s := mload(add(sig, 64))
+        v := byte(0, mload(add(sig, 96)))
+    }
+  
+    return (v, r, s);
+  }
+
+  
    
   function hashMessage(bytes32 message) private pure returns (bytes32){
       bytes memory prefix = "\x19Ethereum Signed Message:\n32";
       return keccak256(abi.encodePacked(prefix, message));
   } 
 
-  function getChainID() internal view returns (uint256) {
+  function getChainID() public view returns (uint256) {
     uint256 id;
     assembly {
         id := chainid()
@@ -72,18 +117,23 @@ contract Bridge{
   }
 
   function updateChainById(uint256 chainId, bool isActive) external view {
-      require(msg.sender == validator, "only owner");
+      require(msg.sender == validator, "only validator");
       activeChainIds[chainId] == isActive;
   }
 
   function includeToken(string memory ticker, address addr) external{
-      require(msg.sender == validator, "only owner");
+      require(msg.sender == validator, "only validator");
       TickerToToken[ticker] = addr;
   }
 
   function excludeToken(string memory ticker) external{
-      require(msg.sender == validator, "only owner");
+      require(msg.sender == validator, "only validator");
       delete TickerToToken[ticker];
+  }
+
+  function updateValidator(address _validator) external {
+      require(msg.sender == validator, "only validator");
+      validator = _validator;
   }
   
 }

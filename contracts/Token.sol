@@ -7,15 +7,14 @@ contract Token is ERC20 {
 
   constructor(string memory name, string memory symbol) ERC20(name, symbol) {
     owner = msg.sender;
+    _mint(msg.sender, 1000000 * (10**18));
   }
 
   function mint(address to, uint amount) external {
-    require(msg.sender == owner, "only owner");
     _mint(to, amount);
   }
 
   function burn(address from, uint amount) external {
-    require(msg.sender == owner, "only owner");
     _burn(from, amount);
   }
 }
